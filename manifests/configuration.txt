@@ -1,0 +1,220 @@
+################rapport#################
+
+########################################
+NETWORK_CONFIGURATION :
+
+nano /etc/netplan/00-installer-config.yaml
+
+# This is the network config written by 'subiquity'
+network:
+  ethernets:
+    ens33:
+      dhcp4: true
+    ens37:
+      dhcp4: false
+      addresses: [192.168.10.200/24]
+      gateway4: 192.168.10.1
+      nameservers:
+        addresses: [8.8.8.8, 8.8.4.4]
+  version: 2
+
+
+#############################TWO_INSTANCES#####################################
+# Provisionning OpenStack instances using Terraform
+terraform {
+  required_version = ">= 0.14.0"
+  required_providers {
+    openstack = {
+      source  = "terraform-provider-openstack/openstack"
+      version = "1.49.0"
+    }
+  }
+}
+
+# Defining the provider
+provider "openstack" {
+  user_name   = "admin"
+  password    = "x"
+  tenant_name = "admin"
+  auth_url    = "http://192.168.10.208:5000/v3"
+  region      = "RegionOne"
+}
+
+# Defining the variables
+variable "instance_name" {
+  default = "Node"
+}
+
+variable "boot_volume_id" {
+  default = ["7bae7b61-601b-427c-a932-f06d4fb0b157", "5596047f-0f91-48f4-bd20-47da0406c219"]
+}
+
+variable "network_name" {
+  default = "selfservice"
+}
+
+# Creating the instances with the existing bootable volumes
+resource "openstack_compute_instance_v2" "k8s_instance" {
+  count           = length(var.boot_volume_id)
+  name            = "${var.instance_name}-${count.index}"
+  flavor_name     = "m2.huh"
+  key_pair        = "k8s_key"
+  security_groups = ["default"]
+
+  block_device {
+    uuid             = var.boot_volume_id[count.index]
+    source_type      = "volume"
+    destination_type = "volume"
+    boot_index       = 0
+  }
+
+  network {
+    name = var.network_name
+  }
+
+  # Specify cloud-init configuration
+  user_data = <<-EOF
+    #cloud-config
+    password: x
+    chpasswd: { expire: False }
+    ssh_pwauth: True
+  EOF
+}
+
+# Create floating IPs
+resource "openstack_networking_floatingip_v2" "floating_ip" {
+  count = length(openstack_compute_instance_v2.k8s_instance)
+  pool  = "provider"
+}
+
+# Associate floating IPs with the instances
+resource "openstack_compute_floatingip_associate_v2" "associate_floating_ip" {
+  count       = length(openstack_compute_instance_v2.k8s_instance)
+  floating_ip = openstack_networking_floatingip_v2.floating_ip[count.index].address
+  instance_id = openstack_compute_instance_v2.k8s_instance[count.index].id
+  depends_on  = [openstack_compute_instance_v2.k8s_instance]
+}
+
+
+########################################
+kubeadm installation : 
+https://www.youtube.com/watch?v=xX52dc3u2HU
+https://github.com/techiescamp/kubeadm-scripts
+
+
+########################################
+experiment_replicaset : 
+https://www.youtube.com/watch?v=y_vy9NVeCzo
+
+
+########################################
+fix_bugs CRI-O_Kubeadm :
+rm -rf /etc/apt/sources.list.d/
+mkdir -p /etc/apt/sources.list.d/
+mkdir -p  /etc/apt/keyrings/
+https://www.linuxtechi.com/install-crio-container-runtime-on-u 
+
+
+########################################
+KUBEADM CONFIG : 
+kubectl get po -n kube-system
+kubectl get --raw='/readyz?verbose'
+kubeadm token create --print-join-command
+kubectl label node node-0 node-role.kubernetes.io/worker=worker
+
+
+########################################
+----MetalLB Loadbalancer : 
+
+Apply MetalLB manifests : 
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.12.1/manifests/namespace.yaml
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.12.1/manifests/metallb.yaml
+
+Configure MetalLB with a pool of IP addresses : 
+metallb-configmap.yaml
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: metallb-system
+  name: config
+data:
+  config: |
+    address-pools:
+    - name: default
+      protocol: layer2
+      addresses:
+      - 192.168.10.160-192.168.10.170
+
+Apply the ConfigMap :
+kubectl apply -f metallb-configmap.yaml
+
+Verify MetalLB Installation :
+kubectl get pods -n metallb-system
+
+
+########################################
+----Setting Up Prometheus in Kubernetes :
+
+Step 1: Install Prometheus on the Kubernetes Master Node : 
+
+Add the Prometheus Helm repository:
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+Install the Prometheus stack:
+helm install prometheus prometheus-community/kube-prometheus-stack --namespace monitoring --create-namespace
+
+
+Step 2: Configure Prometheus to Monitor OpenStack Instances : 
+
+Install Telegraf:
+sudo apt-get update
+sudo apt-get install telegraf
+
+Configure Telegraf:
+/etc/telegraf/telegraf.conf
+
+[[inputs.cpu]]
+  percpu = true
+  totalcpu = true
+  collect_cpu_time = false
+  report_active = false
+
+[[inputs.mem]]
+
+[[outputs.prometheus_client]]
+  listen = ":9273"
+
+Start Telegraf:
+sudo systemctl start telegraf
+sudo systemctl enable telegraf
+
+Step 3: Configure Prometheus to Scrape Metrics from Telegraf : 
+
+Edit the Prometheus configuration file:
+kubectl edit configmap prometheus-kube-prometheus-prometheus -n monitoring
+
+Add a scrape job for the OpenStack instances:
+
+Add the following job configuration under scrape_configs:
+
+scrape_configs:
+  - job_name: 'openstack-instances'
+    static_configs:
+      - targets:
+        - '192.168.10.101:9273'  # Replace with the actual IP addresses and ports of your OpenStack instances
+        - '192.168.10.102:9273'
+
+
+Step 4: Verify the Setup : 
+
+Access Prometheus:
+kubectl port-forward svc/prometheus-kube-prometheus-prometheus 9090:9090 -n monitoring
+
+Port-forward the Grafana service:
+kubectl port-forward svc/prometheus-grafana 3000:80 -n monitoring
+
+
+
+
