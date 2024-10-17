@@ -314,4 +314,46 @@ ReadinessProbe:
   periodSeconds: 20
   timeoutSeconds: 10
 
+# backend-application.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: backend-app
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://gitlab.com/pfe1384022/devops.git
+    targetRevision: main
+    path: manifests
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    #syncOptions:
+    #- CreateNamespace=true
+
+---
+# frontend-application.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: frontend-app
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://gitlab.com/pfe1384022/frontend.git
+    targetRevision: main
+    path: manifests
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
 
