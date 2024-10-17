@@ -1,23 +1,21 @@
 ################rapport#################
 
 ########################################
-NETWORK_CONFIGURATION :
-
+NETWORK_CONFIGURATION 
 nano /etc/netplan/00-installer-config.yaml
-
+sudo netplan apply
 # This is the network config written by 'subiquity'
 network:
   ethernets:
     ens33:
-      dhcp4: true
-    ens37:
       dhcp4: false
-      addresses: [192.168.10.200/24]
-      gateway4: 192.168.10.1
+      addresses: [192.168.43.44/24]
+      gateway4: 192.168.43.1
       nameservers:
         addresses: [8.8.8.8, 8.8.4.4]
+    ens38:
+      dhcp4: true
   version: 2
-
 
 #############################TWO_INSTANCES#####################################
 # Provisionning OpenStack instances using Terraform
@@ -100,6 +98,7 @@ resource "openstack_compute_floatingip_associate_v2" "associate_floating_ip" {
 kubeadm installation : 
 https://www.youtube.com/watch?v=xX52dc3u2HU
 https://github.com/techiescamp/kubeadm-scripts
+https://devopscube.com/setup-kubernetes-cluster-kubeadm/
 
 
 ########################################
@@ -114,16 +113,36 @@ mkdir -p /etc/apt/sources.list.d/
 mkdir -p  /etc/apt/keyrings/
 https://www.linuxtechi.com/install-crio-container-runtime-on-u 
 
+########################################
+fix_bugs Containerd :
+su root  
+apt remove containerd
+apt update
+apt install containerd.io
+rm /etc/containerd/config.toml
+systemctl restart containerd
+
+########################################
+
+fix_Kubernetes “x509: certificate has expired : 
+kubeadm certs renew all
+sudo cp -i /etc/kubernetes/admin.conf "$HOME"/.kube/config
+systemctl restart kubelet 
 
 ########################################
 KUBEADM CONFIG : 
 kubectl get po -n kube-system
 kubectl get --raw='/readyz?verbose'
 kubeadm token create --print-join-command
-kubectl label node node-0 node-role.kubernetes.io/worker=worker
+kubectl label node worker node-role.kubernetes.io/worker=worker
 
 
 ########################################
+Install Helm  :
+
+ https://phoenixnap.com/kb/install-helm
+
+#################UU6GXEUJ#######################
 ----MetalLB Loadbalancer : 
 
 Apply MetalLB manifests : 
@@ -144,7 +163,7 @@ data:
     - name: default
       protocol: layer2
       addresses:
-      - 192.168.10.160-192.168.10.170
+      - 192.168.10.100-192.168.10.130
 
 Apply the ConfigMap :
 kubectl apply -f metallb-configmap.yaml
@@ -158,63 +177,141 @@ kubectl get pods -n metallb-system
 
 Step 1: Install Prometheus on the Kubernetes Master Node : 
 
-Add the Prometheus Helm repository:
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo add grafana https://grafana.github.io/helm-charts
 helm repo update
+
 
 Install the Prometheus stack:
 helm install prometheus prometheus-community/kube-prometheus-stack --namespace monitoring --create-namespace
 
+Enable Grafana
 
-Step 2: Configure Prometheus to Monitor OpenStack Instances : 
+helm show values prometheus-community/kube-prometheus-stack > values.yaml
 
-Install Telegraf:
-sudo apt-get update
-sudo apt-get install telegraf
-
-Configure Telegraf:
-/etc/telegraf/telegraf.conf
-
-[[inputs.cpu]]
-  percpu = true
-  totalcpu = true
-  collect_cpu_time = false
-  report_active = false
-
-[[inputs.mem]]
-
-[[outputs.prometheus_client]]
-  listen = ":9273"
-
-Start Telegraf:
-sudo systemctl start telegraf
-sudo systemctl enable telegraf
-
-Step 3: Configure Prometheus to Scrape Metrics from Telegraf : 
-
-Edit the Prometheus configuration file:
-kubectl edit configmap prometheus-kube-prometheus-prometheus -n monitoring
-
-Add a scrape job for the OpenStack instances:
-
-Add the following job configuration under scrape_configs:
-
-scrape_configs:
-  - job_name: 'openstack-instances'
-    static_configs:
-      - targets:
-        - '192.168.10.101:9273'  # Replace with the actual IP addresses and ports of your OpenStack instances
-        - '192.168.10.102:9273'
+grafana:
+  enabled: true
+  adminPassword: "your-admin-password" 
+  persistence:
+    enabled: true
+    size: 10Gi
+  service:
+    type: LoadBalancer
+    port: 3000
+    portName: http-web
+    ipFamilies: []
+    ipFamilyPolicy: ""
 
 
-Step 4: Verify the Setup : 
+2. Upgrade the Helm Release
+helm upgrade --install prometheus prometheus-community/kube-prometheus-stack --namespace monitoring --create-namespace -f values.yaml
 
-Access Prometheus:
-kubectl port-forward svc/prometheus-kube-prometheus-prometheus 9090:9090 -n monitoring
+3. Verify the Deployment
+kubectl get pods -n monitoring
 
-Port-forward the Grafana service:
-kubectl port-forward svc/prometheus-grafana 3000:80 -n monitoring
+########################################
+########################################
+########################################
+############### D_E_V_O_P_S ############
+########################################
+########################################
+########################################
+
+########################################
+install npm : 
+
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash
+source ~/.bashrc
+nvm install 18.20.2
+node -v
+
+########################################
+Installing helm :
+wget https://get.helm.sh/helm-v3.9.3-linux-amd64.tar.gz
+tar xvf helm-v3.9.3-linux-amd64.tar.gz
+sudo mv linux-amd64/helm /usr/local/bin
+rm helm-v3.9.3-linux-amd64.tar.gz
+helm version
+########################################
+ARgoCD:
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+kubectl get pods -n argocd
+kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "LoadBalancer"}}'
+kubectl get svc argocd-server -n argocd
+kubectl get secret argocd-initial-admin-secret -n argocd -o yaml
+echo "password" | base64 --decode
 
 
+Username: admin
+Password: GyzdZUGA5lCAqmBU
+
+########################################
+Installing GitLab Runner :
+values.yaml : 
+
+gitlabUrl: https://gitlab.com/
+runnerRegistrationToken: "glrt-w4iRi7vu-9oiPh954aVH"
+rbac:
+  create: true
+runners:
+  config: |
+    [[runners]]
+      [runners.kubernetes]
+        namespace = "gitlab-runner"
+  privileged: true
+  namespace: "gitlab-runner"
+  serviceAccountName: "gitlab-runner"
+  image: "alpine:latest"
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "200m"
+  environment:
+  - FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY=true
+
+  
+ helm repo add gitlab https://charts.gitlab.io
+ helm repo update
+ helm install gitlab-runner gitlab/gitlab-runner --namespace gitlab-runner --create-namespace -f values.yaml
+ #upgrade : 
+ helm upgrade gitlab-runner gitlab/gitlab-runner --namespace gitlab-runner  --values values.yaml 
+
+
+kubectl rollout restart deployment gitlab-runner -n gitlab-runner
+
+
+helm upgrade gitlab-runner \
+    --namespace gitlab-runner \
+    --values values.yaml \
+    --set gitlabUrl=https://gitlab.com,runnerRegistrationToken=glrt-w4iRi7vu-9oiPh954aVH \
+    gitlab/gitlab-runner
+
+
+    iXuBsQbuhLYjVAlF
+
+#########################################
+metrics error : 
+    livenessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 300       
+  periodSeconds: 20
+  timeoutSeconds: 10
+After which the liveness probe started executing successfully
+
+Same can be done for the readiness probe:
+
+ReadinessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 20
+  timeoutSeconds: 10
 
 
